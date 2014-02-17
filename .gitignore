@@ -1,0 +1,4 @@
+*.png
+*.pyc
+homogenisation/data/*/*
+homogenisation/emcee
