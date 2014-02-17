@@ -305,7 +305,7 @@ def plot_acceptance_fractions(mean_acceptance_fractions, burn=None):
 if __name__ == "__main__":
 
     # Benchmark data
-    benchmarks_filename = "benchmarks.txt"
+    benchmarks_filename = "data/benchmarks.txt"
 
     # iDR2.0: ~November 2013
     node_results_filenames = glob("data/iDR2.0/WG11NodeParamsDR2/GES_iDR2_WG11_*.fits")
