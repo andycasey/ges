@@ -34,7 +34,7 @@ def load_benchmarks(filename):
     max_filenames_len, max_cname_len, max_object_len = (max(map(len, data[:, i])) for i in xrange(3))
 
     benchmarks = np.core.records.fromarrays(data.T,
-        names=["FILENAME", "CNAME", "Object", "TEFF", "LOGG", "FeH"],
+        names=["FILENAME", "CNAME", "Object", "TEFF", "LOGG", "MH"],
         formats=[
             "|S{0:.0f}".format(max_filenames_len),
             "|S{0:.0f}".format(max_cname_len),
@@ -256,21 +256,21 @@ def calculate_weights(benchmarks, data, stellar_parameters,
         unit = " " + units[stellar_parameter.lower()] if stellar_parameter.lower() in units.keys() else ""
 
         # Calculate optimally weighted properties
-        optimally_weighted_values = np.array([calculate_weighted_value(optimal_weights, data[0, j, :], data[1, j, :]) for j in xrange(num_benchmarks)])
+        optimally_weighted_values = np.array([calculate_weighted_value(optimal_weights, data[2*i, j, :], data[2*i + 1, j, :]) for j in xrange(num_benchmarks)])
         optimally_weighted_values, optimally_weighted_errors = optimally_weighted_values[:, 0], optimally_weighted_values[:, 1]
 
         # Print them out
         for benchmark, optimally_weighted_value, optimally_weighted_error in \
             zip(benchmarks, optimally_weighted_values, optimally_weighted_errors):
-            logger.info("Benchmark {0} for {1:15s}: {2:.0f}{5}, optimally weighted value: {3:.0f}{5} (Delta: {4:+4.0f}{5})".format(
+            logger.info("Benchmark {0} for {1:13s}: {2:.2f}{5}, optimally weighted value: {3:.2f}{5} (Delta: {4:+7.2f}{5})".format(
                 stellar_parameter, benchmark["Object"], benchmark[stellar_parameter], optimally_weighted_value, 
-                optimally_weighted_value - benchmark[stellar_parameter]), unit)
+                optimally_weighted_value - benchmark[stellar_parameter], unit))
 
         # Provide some general information
-        logger.info("Mean offset between benchmark and optimally weighted {0}: {1:.0f}{2}".format(
-            stellar_parameter, np.mean(benchmarks[stellar_parameters] - optimally_weighted_values), unit))
-        logger.info("Mean standard deviation between benchmark and optimally weighted {0}: {1:.0f}{2}".format(
-            stellar_parameter, np.std(benchmarks[stellar_parameter] - optimally_weighted_teffs), unit))
+        logger.info("Mean offset between benchmark and optimally weighted {0}: {1:.2f}{2}".format(
+            stellar_parameter, np.mean(benchmarks[stellar_parameter] - optimally_weighted_values), unit))
+        logger.info("Mean standard deviation between benchmark and optimally weighted {0}: {1:.2f}{2}".format(
+            stellar_parameter, np.std(benchmarks[stellar_parameter] - optimally_weighted_values), unit))
 
     return (optimal_weights, sampler, mean_acceptance_fractions)
 
@@ -323,7 +323,7 @@ if __name__ == "__main__":
     shuffle(node_results_filenames)
 
     # Specify stellar parameters to optimally weight
-    stellar_parameters = ["TEFF"]#, "LOGG"]
+    stellar_parameters = ["TEFF", "LOGG", "MH"]
 
     # Loads them data
     benchmarks, data = prepare_data(benchmarks_filename, node_results_filenames,
@@ -348,7 +348,5 @@ if __name__ == "__main__":
 
     # - Triangle
     samples = sampler.chain[:, burn:, :].reshape((-1, num_nodes))
-    samples = np.abs(samples)
-    fig = triangle.corner(samples, labels=["$w_{{{0}}}$".format(i) for i in xrange(num_nodes)],
-        quantiles=[16, 50, 84], verbose=True)
+    fig = triangle.corner(samples, labels=["$w_{{{0}}}$".format(i) for i in xrange(num_nodes)], verbose=True)
     fig.savefig("triangle.png")
