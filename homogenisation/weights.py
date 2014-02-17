@@ -111,8 +111,19 @@ def lnprobfn(weights, benchmarks, data, stellar_parameters):
     return -0.5*total_chi_sq
 
 
+def in_acceptable_ranges(star, acceptable_ranges):
+
+    if acceptable_ranges is None: return True
+
+    for stellar_parameter, (min_range, max_range) in acceptable_ranges.iteritems():
+        if min_range > star[stellar_parameter] or star[stellar_parameter] > max_range:
+            return False
+
+    return True
+
+
 def prepare_data(benchmarks_filename, node_results_filenames,
-    stellar_parameters=["TEFF"]):
+    stellar_parameters, acceptable_ranges=None):
     """ Loads expected stellar parameters from the Gaia benchmarks file, as well
     as measured stellar parameter from each of the Gaia-ESO Survey nodes """
 
@@ -148,6 +159,7 @@ def prepare_data(benchmarks_filename, node_results_filenames,
     for stellar_parameter in stellar_parameters_copy:
         node_stellar_parameters[stellar_parameter] = []
 
+    all_snrs_sampled = []
     for benchmark in benchmarks:
 
         benchmark_results = {}
@@ -175,20 +187,54 @@ def prepare_data(benchmarks_filename, node_results_filenames,
 
             problems = False
             for stellar_parameter in stellar_parameters_copy:
-                if not np.isfinite(node[index][stellar_parameter]):
+
+                # Some WG11 nodes use FeH ([Fe/H]) where as some nodes use [M/H]
+                # This is annoying.
+                if stellar_parameter in ("MH", "FeH"):
+                    if np.all(~np.isfinite(node["MH"])):
+                        logger.debug("The {0} node has *only* non-finite measurements of 'MH', so we are using 'FeH' instead.".format(
+                            repr_node(node_results_filename)))
+                        reference_stellar_parameter = "FeH"
+
+                    else:
+                        logger.debug("The {0} node has *only* non-finite measurements of 'FeH', so we are using 'MH' instead".format(
+                            repr_node(node_results_filename)))
+                        reference_stellar_parameter = "MH"
+
+                elif stellar_parameter in ("e_MH", "e_FeH"):
+                    if np.all(~np.isfinite(node["e_MH"])):
+                        logger.debug("The {0} node has *only* non-finite measurements of 'e_MH', so we are using 'e_FeH' instead.".format(
+                            repr_node(node_results_filename)))
+                        reference_stellar_parameter = "e_FeH"
+
+                    else:
+                        logger.debug("The {0} node has *only* non-finite measurements of 'e_FeH', so we are using 'e_MH' instead".format(
+                            repr_node(node_results_filename)))
+                        reference_stellar_parameter = "e_MH"
+
+                else:
+                    reference_stellar_parameter = stellar_parameter
+
+                if not np.isfinite(node[index][reference_stellar_parameter]):
                     logger.warn("{0} node has a non-finite measurement of {1} for the benchmark star {2}".format(
-                        repr_node(node_results_filename), stellar_parameter, benchmark["Object"]))
+                        repr_node(node_results_filename), reference_stellar_parameter, benchmark["Object"]))
 
                     problems = True
                     benchmark_results[stellar_parameter].append(np.nan)
 
+                #elif Bad Flags?
+
+                elif not in_acceptable_ranges(node[index], acceptable_ranges):
+                    benchmark_results[stellar_parameter].append(np.nan)
+
                 else:
                     # Build data arrays  
-                    benchmark_results[stellar_parameter].append(node[index][stellar_parameter][0])
+                    benchmark_results[stellar_parameter].append(node[index][reference_stellar_parameter][0])
 
             if not problems:
                 logger.debug("Node {0} states S/N ratio for {1} is {2}".format(
                     repr_node(node_results_filename), benchmark["Object"], node[index]["SNR"][0]))
+                all_snrs_sampled.append(node[index]["SNR"][0])
 
         for stellar_parameter in stellar_parameters_copy:
             node_stellar_parameters[stellar_parameter].append(benchmark_results[stellar_parameter])
@@ -196,7 +242,7 @@ def prepare_data(benchmarks_filename, node_results_filenames,
     # Arrayify
     data = np.array([node_stellar_parameters[stellar_parameter] for stellar_parameter in stellar_parameters_copy])
     
-    return (benchmarks, data)
+    return (benchmarks, data, all_snrs_sampled)
 
 
 def calculate_weights(benchmarks, data, stellar_parameters,
@@ -234,11 +280,11 @@ def calculate_weights(benchmarks, data, stellar_parameters,
     # Show posterior values
     samples = sampler.chain[:, burn:, :].reshape((-1, ndim))
     posteriors = map(lambda v: (v[1], v[2] - v[1], v[1] - v[0]), zip(*np.percentile(samples, [16, 50, 84], axis=0)))
-    optimal_weights = np.zeros(ndim)
+    optimal_weights = np.zeros((ndim, 3))
 
     logger.info("Posterior quantiles:")
     for i, (posterior_value, positive_stddev, negative_stddev) in enumerate(posteriors):
-        optimal_weights[i] = posterior_value
+        optimal_weights[i, :] = [posterior_value, positive_stddev, negative_stddev]
         logger.info("$w_{{{0:2.00f}}}$ = {1:6.3f} +/- ({2:+6.3f}, {3:-6.3f})".format(
             i, posterior_value, positive_stddev, negative_stddev))
 
@@ -256,20 +302,20 @@ def calculate_weights(benchmarks, data, stellar_parameters,
         unit = " " + units[stellar_parameter.lower()] if stellar_parameter.lower() in units.keys() else ""
 
         # Calculate optimally weighted properties
-        optimally_weighted_values = np.array([calculate_weighted_value(optimal_weights, data[2*i, j, :], data[2*i + 1, j, :]) for j in xrange(num_benchmarks)])
+        optimally_weighted_values = np.array([calculate_weighted_value(optimal_weights[:, 0], data[2*i, j, :], data[2*i + 1, j, :]) for j in xrange(num_benchmarks)])
         optimally_weighted_values, optimally_weighted_errors = optimally_weighted_values[:, 0], optimally_weighted_values[:, 1]
 
         # Print them out
         for benchmark, optimally_weighted_value, optimally_weighted_error in \
             zip(benchmarks, optimally_weighted_values, optimally_weighted_errors):
-            logger.info("Benchmark {0} for {1:13s}: {2:.2f}{5}, optimally weighted value: {3:.2f}{5} (Delta: {4:+7.2f}{5})".format(
+            logger.info("Benchmark {0} for {1:13s}: {2:5.2f}{5}, optimally weighted value: {3:5.2f}{5} (Delta: {4:+7.2f}{5})".format(
                 stellar_parameter, benchmark["Object"], benchmark[stellar_parameter], optimally_weighted_value, 
                 optimally_weighted_value - benchmark[stellar_parameter], unit))
 
         # Provide some general information
-        logger.info("Mean offset between benchmark and optimally weighted {0}: {1:.2f}{2}".format(
+        logger.info("Mean offset between benchmark and optimally weighted {0}: {1:5.2f}{2}".format(
             stellar_parameter, np.mean(benchmarks[stellar_parameter] - optimally_weighted_values), unit))
-        logger.info("Mean standard deviation between benchmark and optimally weighted {0}: {1:.2f}{2}".format(
+        logger.info("Mean standard deviation between benchmark and optimally weighted {0}: {1:5.2f}{2}".format(
             stellar_parameter, np.std(benchmarks[stellar_parameter] - optimally_weighted_values), unit))
 
     return (optimal_weights, sampler, mean_acceptance_fractions)
@@ -313,40 +359,45 @@ if __name__ == "__main__":
     node_results_filenames = glob("data/iDR2.1/GES_iDR2_WG11_*.fits")
 
     # Clean up the data files: remove 'Recommended' parameter files and exclude
-    # the results from node 'ULB' because they have withdrawn
+    # the results from node 'ULB' because they have withdrawn???
     node_results_filenames = [filename for filename in node_results_filenames \
         if not filename.endswith("Recommended.fits")]
-    node_results_filenames = [filename for filename in node_results_filenames \
-        if not filename.endswith("_ULB.fits")]
+    #node_results_filenames = [filename for filename in node_results_filenames \
+    #    if not filename.endswith("_ULB.fits")]
 
     # Shuffle the nodes around
     shuffle(node_results_filenames)
 
     # Specify stellar parameters to optimally weight
+    # Only some nodes (IACAIP and Nice) actually specify MH (i.e., [M/H]) where
+    # as all other nodes actually specify "FeH", [Fe/H]
+
+    # Here we will specify 'MH' and the code will handle this internally
     stellar_parameters = ["TEFF", "LOGG", "MH"]
 
     # Loads them data
-    benchmarks, data = prepare_data(benchmarks_filename, node_results_filenames,
-        stellar_parameters)
+    benchmarks, data, all_snrs_sampled = prepare_data(benchmarks_filename, node_results_filenames,
+        stellar_parameters, acceptable_ranges=None)
 
     # Seed
     #np.random.seed(888)
 
-    # Hammer
-    num_nodes = len(node_results_filenames)
-    nwalkers, burn, sample = 750, 500, 250
-    optimal_weights, sampler, mean_acceptance_fractions = calculate_weights(
-        benchmarks, data, stellar_parameters, nwalkers=nwalkers, burn=burn,
-        sample=sample)
+    if False:
+        # Hammer
+        num_nodes = len(node_results_filenames)
+        nwalkers, burn, sample = 500, 500, 500
+        optimal_weights, sampler, mean_acceptance_fractions = calculate_weights(
+            benchmarks, data, stellar_parameters, nwalkers=nwalkers, burn=burn,
+            sample=sample)
 
-    # Visualise
-    # - Acceptance
-    fig = plot_acceptance_fractions(mean_acceptance_fractions, burn=burn)
-    fig.savefig("acceptance.png")
+        # Visualise
+        # - Acceptance
+        fig = plot_acceptance_fractions(mean_acceptance_fractions, burn=burn)
+        fig.savefig("acceptance.png")
 
-    # - All sampled parameters, their $\chi^2$ and $L$ values
+        # - All sampled parameters, their $\chi^2$ and $L$ values
 
-    # - Triangle
-    samples = sampler.chain[:, burn:, :].reshape((-1, num_nodes))
-    fig = triangle.corner(samples, labels=["$w_{{{0}}}$".format(i) for i in xrange(num_nodes)], verbose=True)
-    fig.savefig("triangle.png")
+        # - Triangle
+        samples = sampler.chain[:, burn:, :].reshape((-1, num_nodes))
+        fig = triangle.corner(samples, labels=["$w_{{{0}}}$".format(i) for i in xrange(num_nodes)], verbose=True)
+        fig.savefig("triangle.png")
