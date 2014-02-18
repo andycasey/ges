@@ -11,7 +11,6 @@ import logging
 import os
 from glob import glob
 from multiprocessing import cpu_count
-from random import shuffle
 from time import time
 
 # Third party libraries
@@ -22,7 +21,7 @@ import pyfits
 import triangle
 
 # Initialise logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(filename="homogenisation.log", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
@@ -48,8 +47,9 @@ def load_node_results(filename):
     """ Loads the spectroscopic results from a Gaia-ESO Survey node
     as an array """
 
-    image = pyfits.open(filename)
-    return image[1].data
+    with pyfits.open(filename) as image:
+        data = image[1].data
+    return data
 
 
 def calculate_weighted_value(weights, node_values, node_errors,
@@ -57,7 +57,8 @@ def calculate_weighted_value(weights, node_values, node_errors,
     """ Calculate a weighted stellar parameter based on results from 
     multiple Gaia-ESO survey nodes """
 
-    assert len(weights) == len(node_values)
+    assert len(weights.shape) < 3
+    assert weights.shape[-1] == len(node_values)
     assert len(node_values) == len(node_errors)
 
     if ignore_non_finite_values:
@@ -66,25 +67,40 @@ def calculate_weighted_value(weights, node_values, node_errors,
     else:
         isfinite = np.array([True] * len(node_values))
 
-    # Should we be allowing a range of acceptable values through kwargs?
-    weighted_value = np.sum((weights * node_values)[isfinite])/sum(isfinite)
-    weighted_value_variance = (1/np.sum(1/(node_errors[isfinite]**2))) \
-        * (1/(sum(isfinite) - 1)) * np.sum(((node_values[isfinite] - weighted_value)**2)/(node_errors[isfinite])**2)
-
-    weighted_value_stddev = weighted_value_variance**0.5
-
-    return (weighted_value, weighted_value_stddev)
+    if len(weights.shape) > 1:
+        weighted_value = np.sum((weights * node_values)[:, isfinite], axis=1)/sum(isfinite)
+        weighted_value_variance = (1/np.sum(1/(node_errors[isfinite]**2))) \
+            * (1/float(sum(isfinite) - 1)) * np.sum(((node_values[isfinite] \
+                - np.column_stack([weighted_value] * sum(isfinite)))**2)/(node_errors[isfinite])**2, axis=1)
 
 
-def chi_sq(model, observed, uncertainty):
+    else:
+        weighted_value = np.sum((weights * node_values)[isfinite])/sum(isfinite)
+        weighted_value_variance = (1/np.sum(1/(node_errors[isfinite]**2))) \
+            * (1/float(sum(isfinite) - 1)) * np.sum(((node_values[isfinite] - weighted_value)**2)/(node_errors[isfinite])**2)
+
+
+    #weighted_value_stddev = weighted_value_variance**0.5
+
+    return (weighted_value, weighted_value_variance)
+
+
+def chi_sq(model, observed, uncertainty, ignore_non_finite_values=True):
     """ Calculate the $\chi^2$ difference between the model and an
     observation with uncertainties """
 
     assert len(model) == len(observed)
     assert len(observed) == len(uncertainty)
 
+    if ignore_non_finite_values:
+        isfinite = np.isfinite(observed) & np.isfinite(uncertainty)
+
+    else:
+        isfinite = np.array([True] * len(observed))
+
+
     chi_sq_i = ((observed - model)**2)/uncertainty
-    chi_sq = np.sum(chi_sq_i)
+    chi_sq = np.sum(chi_sq_i[isfinite])
     return chi_sq
 
 
@@ -94,11 +110,13 @@ def lnprobfn(weights, benchmarks, data, stellar_parameters):
     if np.any(0 > weights):
         return -np.inf
 
+    num_nodes = data.shape[2]
     num_benchmarks = len(benchmarks)
 
+    assert num_nodes > 0
     assert num_benchmarks > 0
     assert len(stellar_parameters) > 0
-
+    
     total_chi_sq = 0
     for i, stellar_parameter in enumerate(stellar_parameters):
 
@@ -107,16 +125,32 @@ def lnprobfn(weights, benchmarks, data, stellar_parameters):
         weighted_values, weighted_uncertainties = weighted_values[:, 0], weighted_values[:, 1]
 
         total_chi_sq += chi_sq(benchmarks[stellar_parameter], weighted_values, weighted_uncertainties)
- 
+    
+    """
+    # Weights to be applied to each Node chi^2 value.
+    # Each node chi^2 value is the sum difference in all their Teff, logg, [Fe/H] measurements
+    total_chi_sq = 0
+    for i in xrange(num_nodes):
+
+        node_chi_sq = 0
+        for j, stellar_parameter in enumerate(stellar_parameters):
+            node_chi_sq += chi_sq(benchmarks[stellar_parameter], data[2*j, :, i], data[2*j+1, :, i])
+
+        total_chi_sq += weights[i] * np.log(node_chi_sq)
+    """
+
     return -0.5*total_chi_sq
 
 
 def in_acceptable_ranges(star, acceptable_ranges):
+    """ Returns whether the measured stellar parameters are within
+    acceptable ranges """
 
     if acceptable_ranges is None: return True
 
     for stellar_parameter, (min_range, max_range) in acceptable_ranges.iteritems():
-        if min_range > star[stellar_parameter] or star[stellar_parameter] > max_range:
+        if (min_range is not None and min_range > star[stellar_parameter][0]) \
+        or (max_range is not None and star[stellar_parameter][0] > max_range):
             return False
 
     return True
@@ -241,7 +275,8 @@ def prepare_data(benchmarks_filename, node_results_filenames,
 
     # Arrayify
     data = np.array([node_stellar_parameters[stellar_parameter] for stellar_parameter in stellar_parameters_copy])
-    
+
+    # Should we remove any nodes that have absolutely no data to contribute?    
     return (benchmarks, data, all_snrs_sampled)
 
 
@@ -347,6 +382,30 @@ def plot_acceptance_fractions(mean_acceptance_fractions, burn=None):
     return fig
 
 
+def convolve_posterior_weights(weights_posterior, benchmarks, data, stellar_parameters):
+    """Convolves the posterior distribution of optimal weights with the data
+    from each node, and returns distributions of the optimally weighted stellar
+    parameters."""
+
+    # weights can be a NxM array where N is number of samples and M = len(benchmarks) = len(data)
+
+    assert data.shape[0] == len(stellar_parameters)*2
+    assert data.shape[1] == len(benchmarks)
+    assert data.shape[2] == weights_posterior.shape[1]
+
+    # Use *all* the RAM
+    stellar_parameter_distributions = np.zeros(map(len, [weights_posterior, benchmarks, stellar_parameters]))
+
+    for i, benchmark in enumerate(benchmarks):
+        for j, stellar_parameter in enumerate(stellar_parameters):
+            weighted_values, weighted_variances = calculate_weighted_value(
+                weights_posterior, data[2*j, i, :], data[2*j+1, i, :])
+            stellar_parameter_distributions[:, i, j] = weighted_values
+
+    return stellar_parameter_distributions
+
+
+
 # Do the things
 if __name__ == "__main__":
 
@@ -358,46 +417,70 @@ if __name__ == "__main__":
     # iDR2.1: ~February 2014
     node_results_filenames = glob("data/iDR2.1/GES_iDR2_WG11_*.fits")
 
-    # Clean up the data files: remove 'Recommended' parameter files and exclude
-    # the results from node 'ULB' because they have withdrawn???
+    # Clean up the data files: remove 'Recommended' parameter files 
     node_results_filenames = [filename for filename in node_results_filenames \
         if not filename.endswith("Recommended.fits")]
+
+    # Do we exclude the ULB results because they withdrew?
     #node_results_filenames = [filename for filename in node_results_filenames \
     #    if not filename.endswith("_ULB.fits")]
 
-    # Shuffle the nodes around
-    shuffle(node_results_filenames)
+    # Had to exclude ParisHeidelberg because they make no attempt to even provide
+    # uncertainties, and then corrupt the data with faux uncertainties
+    node_results_filenames = [filename for filename in node_results_filenames \
+        if not filename.endswith("_ParisHeidelberg.fits")]
 
+    
     # Specify stellar parameters to optimally weight
     # Only some nodes (IACAIP and Nice) actually specify MH (i.e., [M/H]) where
     # as all other nodes actually specify "FeH", [Fe/H]
 
     # Here we will specify 'MH' and the code will handle this internally
-    stellar_parameters = ["TEFF", "LOGG", "MH"]
+    stellar_parameters = ["TEFF", "LOGG"]#, "MH"]
 
     # Loads them data
     benchmarks, data, all_snrs_sampled = prepare_data(benchmarks_filename, node_results_filenames,
-        stellar_parameters, acceptable_ranges=None)
+        stellar_parameters, acceptable_ranges={
+            "e_TEFF": [0, None],
+            "e_LOGG": [0, None],
+            "e_MH": [0, None]
+        })
 
     # Seed
     #np.random.seed(888)
 
-    if False:
-        # Hammer
-        num_nodes = len(node_results_filenames)
-        nwalkers, burn, sample = 500, 500, 500
-        optimal_weights, sampler, mean_acceptance_fractions = calculate_weights(
-            benchmarks, data, stellar_parameters, nwalkers=nwalkers, burn=burn,
-            sample=sample)
+    # Hammer
+    num_nodes = len(node_results_filenames)
+    nwalkers, burn, sample = 500, 500, 500
+    optimal_weights, sampler, mean_acceptance_fractions = calculate_weights(
+        benchmarks, data, stellar_parameters, nwalkers=nwalkers, burn=burn,
+        sample=sample)
 
-        # Visualise
-        # - Acceptance
-        fig = plot_acceptance_fractions(mean_acceptance_fractions, burn=burn)
-        fig.savefig("acceptance.png")
+    # Get samples after burn-in
+    samples = sampler.chain[:, burn:, :].reshape((-1, num_nodes))
 
-        # - All sampled parameters, their $\chi^2$ and $L$ values
+    # Convolve with the data to obtain optimal stellar parameter distributions
+    distribution = convolve_posterior_weights(samples, benchmarks, data, stellar_parameters)
 
-        # - Triangle
-        samples = sampler.chain[:, burn:, :].reshape((-1, num_nodes))
-        fig = triangle.corner(samples, labels=["$w_{{{0}}}$".format(i) for i in xrange(num_nodes)], verbose=True)
-        fig.savefig("triangle.png")
+    # Get the distribution for the Sun (benchmark index = -2)
+    #  --> distribution[:, -2, :]
+    # Get the temperature (stellar parameter index == 0) distribution for the Sun:
+    #  --> distribution[:, -2, 0]
+
+    # Visualise
+    # - Acceptance
+    fig_acceptance = plot_acceptance_fractions(mean_acceptance_fractions, burn=burn)
+    fig_acceptance.savefig("acceptance.png")
+
+    # - All sampled parameters, their $\chi^2$ and $L$ values
+
+    # - Triangle
+    fig_weights = triangle.corner(samples, labels=["$w_{{{0}}}$".format(i) for i in xrange(num_nodes)], verbose=True)
+    fig_weights.savefig("weights.png")
+
+    # - Visualise optimally weighted stellar parameter distributions for each star
+    for i, benchmark in enumerate(benchmarks):
+        fig_parameters = triangle.corner(distribution[:, i, :],
+            labels=stellar_parameters,
+            truths=[benchmark[stellar_parameter] for stellar_parameter in stellar_parameters])
+        fig_parameters.savefig("benchmark_{0}.png".format(benchmark["Object"]))
