@@ -80,9 +80,9 @@ def calculate_weighted_value(weights, node_values, node_errors,
             * (1/float(sum(isfinite) - 1)) * np.sum(((node_values[isfinite] - weighted_value)**2)/(node_errors[isfinite])**2)
 
 
-    #weighted_value_stddev = weighted_value_variance**0.5
+    weighted_value_stddev = weighted_value_variance**0.5
 
-    return (weighted_value, weighted_value_variance)
+    return (weighted_value, weighted_value_stddev)
 
 
 def chi_sq(model, observed, uncertainty, ignore_non_finite_values=True):
@@ -412,8 +412,6 @@ if __name__ == "__main__":
     # Benchmark data
     benchmarks_filename = "data/benchmarks.txt"
 
-    # iDR2.0: ~November 2013
-    node_results_filenames = glob("data/iDR2.0/WG11NodeParamsDR2/GES_iDR2_WG11_*.fits")
     # iDR2.1: ~February 2014
     node_results_filenames = glob("data/iDR2.1/GES_iDR2_WG11_*.fits")
 
@@ -425,10 +423,10 @@ if __name__ == "__main__":
     #node_results_filenames = [filename for filename in node_results_filenames \
     #    if not filename.endswith("_ULB.fits")]
 
-    # Had to exclude ParisHeidelberg because they make no attempt to even provide
+    # Should we exclude ParisHeidelberg because they make no attempt to even provide
     # uncertainties, and then corrupt the data with faux uncertainties
-    node_results_filenames = [filename for filename in node_results_filenames \
-        if not filename.endswith("_ParisHeidelberg.fits")]
+    #node_results_filenames = [filename for filename in node_results_filenames \
+    #    if not filename.endswith("_ParisHeidelberg.fits")]
 
     
     # Specify stellar parameters to optimally weight
@@ -436,15 +434,11 @@ if __name__ == "__main__":
     # as all other nodes actually specify "FeH", [Fe/H]
 
     # Here we will specify 'MH' and the code will handle this internally
-    stellar_parameters = ["TEFF", "LOGG"]#, "MH"]
+    stellar_parameters = ["TEFF", "LOGG", "MH"]
 
     # Loads them data
     benchmarks, data, all_snrs_sampled = prepare_data(benchmarks_filename, node_results_filenames,
-        stellar_parameters, acceptable_ranges={
-            "e_TEFF": [0, None],
-            "e_LOGG": [0, None],
-            "e_MH": [0, None]
-        })
+        stellar_parameters)
 
     # Seed
     #np.random.seed(888)
@@ -462,11 +456,6 @@ if __name__ == "__main__":
     # Convolve with the data to obtain optimal stellar parameter distributions
     distribution = convolve_posterior_weights(samples, benchmarks, data, stellar_parameters)
 
-    # Get the distribution for the Sun (benchmark index = -2)
-    #  --> distribution[:, -2, :]
-    # Get the temperature (stellar parameter index == 0) distribution for the Sun:
-    #  --> distribution[:, -2, 0]
-
     # Visualise
     # - Acceptance
     fig_acceptance = plot_acceptance_fractions(mean_acceptance_fractions, burn=burn)
@@ -479,8 +468,22 @@ if __name__ == "__main__":
     fig_weights.savefig("weights.png")
 
     # - Visualise optimally weighted stellar parameter distributions for each star
+    parameter_extents = {
+        "TEFF": 64*3,
+        "LOGG": 0.17*3, 
+        "MH": 0.07*3
+    }
     for i, benchmark in enumerate(benchmarks):
+        plt.close("all")
+
+        extents = []
+        truths = [benchmark[stellar_parameter] for stellar_parameter in stellar_parameters],
+        for truth, stellar_parameter in zip(truths, stellar_parameters):
+            extents.append((
+                truth - parameter_extents[stellar_parameter],
+                truth + parameter_extents[stellar_parameter]
+                ))
+
         fig_parameters = triangle.corner(distribution[:, i, :],
-            labels=stellar_parameters,
-            truths=[benchmark[stellar_parameter] for stellar_parameter in stellar_parameters])
+            labels=stellar_parameters, truths=truths, extents=extents)
         fig_parameters.savefig("benchmark_{0}.png".format(benchmark["Object"]))
