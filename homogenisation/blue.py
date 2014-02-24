@@ -104,11 +104,11 @@ def main():
 	except NameError:
 		node_results_filenames = glob("data/iDR2.1/GES_iDR2_WG11_*.fits")
 		remove_nodes = ("Recommended", "ULB", "Liege", "ParisHeidelberg")
-	    node_results_filenames = [filename for filename in all_node_results_filenames \
-	        if "_".join(os.path.basename(filename).split("_")[3:]).rstrip(".fits") not in remove_nodes]
+		node_results_filenames = [filename for filename in node_results_filenames \
+			if "_".join(os.path.basename(filename).split("_")[3:]).rstrip(".fits") not in remove_nodes]
 
-	    # Load the data
-	    stellar_parameters = ("TEFF", "LOGG", "MH")
+		# Load the data
+		stellar_parameters = ("TEFF", "LOGG", "MH")
 		benchmarks, node_data = prepare_data("data/benchmarks.txt", node_results_filenames,
 			stellar_parameters)
 
