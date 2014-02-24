@@ -19,6 +19,10 @@ import numpy as np
 import scipy.optimize
 import pyfits
 import triangle
+
+# Module-specific imports
+from gesio import load_benchmarks, load_node_results, prepare_data
+from plot import boxplots
  
 
 def get_weights(covariance_matrix):
@@ -90,3 +94,43 @@ def blue(measurements, uncertainties, N=1000, full_output=False):
 		return m_average, m_variance, weights
 
 	return m_average, m_variance
+
+
+def main():
+	"""Do the things"""
+
+	# Check if we have already loaded the data
+	try: benchmarks
+	except NameError:
+		node_results_filenames = glob("data/iDR2.1/GES_iDR2_WG11_*.fits")
+		remove_nodes = ("Recommended", "ULB", "Liege", "ParisHeidelberg")
+	    node_results_filenames = [filename for filename in all_node_results_filenames \
+	        if "_".join(os.path.basename(filename).split("_")[3:]).rstrip(".fits") not in remove_nodes]
+
+	    # Load the data
+	    stellar_parameters = ("TEFF", "LOGG", "MH")
+		benchmarks, node_data = prepare_data("data/benchmarks.txt", node_results_filenames,
+			stellar_parameters)
+
+	# Calculate estimates with BLUE
+	recommended_measurements = np.zeros(*map(len, [benchmarks, stellar_parameters]))
+	recommended_uncertainties = np.zeros(*map(len, [benchmarks, stellar_parameters]))
+
+	for j, stellar_parameter in enumerate(stellar_parameters):
+
+		for i, benchmark in enumerate(benchmarks):
+
+			node_measurements = node_data[2*j, i, :]
+			node_uncertainties = node_data[2*j + 1, i, :]
+
+			m_blue, u_blue = blue(node_measurements, node_uncertainties)
+			recommended_measurements[i, j] = m_blue
+			recommended_uncertainties[i, j] = u_blue
+
+	# Visualise the differences
+	boxplots(benchmarks, node_data[::2, :, :], stellar_parameters,
+		labels=("$\Delta{}T_{\\rm eff}$ (K)", "$\Delta{}\log{g}$ (dex)", "$\Delta{}$[Fe/H] (dex)"),
+		recommended_values=recommended_measurements, recommended_uncertainties=recommended_uncertainties)
+
+if __name__ == "__main__":
+	main()
