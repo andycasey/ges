@@ -12,13 +12,30 @@ import numpy as np
 
 __all__ = ["boxplots"]
 
-def boxplots(benchmarks, node_data, stellar_parameters,
-	recommended_values=None, recommended_uncertainties=None, labels=None):
-	"""Draw box plots"""
+def boxplots(benchmarks, node_data, stellar_parameters, labels=None,
+	recommended_values=None, recommended_uncertainties=None,
+	colours=("b", "k", "r")):
+	"""Create box plots highlighting the difference between expected stellar
+	parameters from non-spectroscopic methods, and those measured by each
+	Gaia-ESO Survey node.
 
-	widths = 0.45
-	colors = ["b", "k"]
-	recommended_colour = "r"
+	Inputs
+	------
+	benchmarks : table of benchmarks 
+
+	node_data : shape (N, M, O)
+		N = stellar parameters
+		M = num benchmarks
+		O = num nodes
+
+	recommended_values : array of shape (M, N)
+
+	recommended_uncertainties : array of shape (M, N)
+
+	labels = list of length N
+
+	colors = list of length 3 (outlines, median, recommended)
+	"""
 
 	num_benchmarks, num_nodes = node_data.shape[1:]
 
@@ -32,7 +49,7 @@ def boxplots(benchmarks, node_data, stellar_parameters,
 		data = node_data[i, :, :] - np.array([benchmarks[stellar_parameter]] * num_nodes).T
 
 		ax.plot([0, num_benchmarks + 1], [0, 0], ":", c="#666666", zorder=-10)
-		bp = ax.boxplot([[v for v in row if np.isfinite(v)] for row in data], widths=widths,
+		bp = ax.boxplot([[v for v in row if np.isfinite(v)] for row in data], widths=0.45,
 			patch_artist=True)
 
 		assert len(bp["boxes"]) == num_benchmarks
@@ -64,11 +81,11 @@ def boxplots(benchmarks, node_data, stellar_parameters,
 			rotation=90)
 		
 		# Set colours
-		plt.setp(bp["medians"], color=colors[0], linewidth=2)
-		plt.setp(bp["fliers"], color=colors[1])
+		plt.setp(bp["medians"], color=colours[0], linewidth=2)
+		plt.setp(bp["fliers"], color=colours[1])
 		plt.setp(bp["caps"], visible=False)
-		plt.setp(bp["whiskers"], color=colors[1], linestyle="solid", linewidth=0.5)
-		plt.setp(bp["boxes"], color=colors[1], linewidth=2, facecolor="w")
+		plt.setp(bp["whiskers"], color=colours[1], linestyle="solid", linewidth=0.5)
+		plt.setp(bp["boxes"], color=colours[1], linewidth=2, facecolor="w")
 
 		ax.spines["left"]._linewidth = 0.5
 		ax.spines["bottom"]._linewidth = 0.5
@@ -77,12 +94,12 @@ def boxplots(benchmarks, node_data, stellar_parameters,
 		if recommended_uncertainties is not None and recommended_values is not None:
 			ax.errorbar(np.arange(1, num_benchmarks + 1), recommended_values[i, :] \
 				- benchmarks[stellar_parameter], yerr=recommended_uncertainties[i, :],
-				fmt=None, c=recommended_colour, zorder=50, elinewidth=1, capsize=1,
-				ecolor=recommended_colour)
+				fmt=None, c=colours[2], zorder=50, elinewidth=1, capsize=1,
+				ecolor=colours[2])
 
 		if recommended_values is not None:
 			ax.scatter(np.arange(1, num_benchmarks + 1), recommended_values[i, :] \
-				- benchmarks[stellar_parameter], marker="o", c=recommended_colour,
+				- benchmarks[stellar_parameter], marker="o", c=colours[2],
 				zorder=100, linewidth=0)
 
 		figs.append(fig)
