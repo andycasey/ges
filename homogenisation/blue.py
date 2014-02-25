@@ -18,7 +18,7 @@ import scipy.optimize
 
 # Module-specific imports
 from gesio import load_benchmarks, load_node_results, prepare_data
-from plot import boxplots
+from plot import boxplots, histograms
  
 __all__ = ["get_weights", "blue", "main"]
 
@@ -99,7 +99,7 @@ def main():
     """Do the things"""
 
     # Check if we have already loaded the data
-    global benchmarks, node_data, stellar_parameters
+    global benchmarks, node_data, stellar_parameters, node_results_filenames
 
     try: benchmarks
     except NameError:
@@ -135,12 +135,20 @@ def main():
             recommended_measurements[j, i] = m_blue
             recommended_uncertainties[j, i] = u_blue
 
-    # Visualise the differences
+    # Visualise the differences as box plots
     figs = boxplots(benchmarks, node_data[::2, :, :], stellar_parameters,
         labels=("$\Delta{}T_{\\rm eff}$ (K)", "$\Delta{}\log{g}$ (dex)", "$\Delta{}$[Fe/H] (dex)"),
         recommended_values=recommended_measurements, recommended_uncertainties=recommended_uncertainties)
-    [fig.savefig("blue-benchmarks-{0}.pdf".format(stellar_parameter.lower())) \
+    [fig.savefig("blue-benchmarks-{0}.png".format(stellar_parameter.lower())) \
     	for fig, stellar_parameter in zip(figs, stellar_parameters)]
+
+    # Compare individual node dispersions to the recommended values
+    repr_node = lambda filename: "_".join(os.path.basename(filename).split("_")[3:]).rstrip(".fits")
+    fig = histograms(benchmarks, node_data[::2, :, :], stellar_parameters,
+        parameter_labels=labels, recommended_values=recommended_measurements,
+        node_labels=map(repr_node, node_results_filenames))
+    fig.savefig("blue-distributions.png")
+
 
 if __name__ == "__main__":
 	main()
