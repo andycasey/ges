@@ -105,7 +105,7 @@ def main():
     except NameError:
     	logger.info("Loading data..")
         node_results_filenames = glob("data/iDR2.1/GES_iDR2_WG11_*.fits")
-        remove_nodes = ("Recommended", "ULB", "Liege", "ParisHeidelberg")
+        remove_nodes = ("Recommended",)
         node_results_filenames = [filename for filename in node_results_filenames \
             if "_".join(os.path.basename(filename).split("_")[3:]).rstrip(".fits") not in remove_nodes]
 
