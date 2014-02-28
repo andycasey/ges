@@ -116,6 +116,7 @@ def straight_line(x, y, x_uncertainties=None, y_uncertainties=None,
 
     p0 = []
     for i in xrange(walkers):
+
     	# 2.24, 35.85
         pi = [np.random.normal(2.25, 0.1), np.random.normal(34, 0.1)]
 
@@ -159,6 +160,10 @@ def straight_line(x, y, x_uncertainties=None, y_uncertainties=None,
 
         print("At sample iteration {0} of {1}. Time to sample completion is ~{2:.0f} secs. Mean acceptance fraction: {3:.3f}".format(
             j + 1, burn_in, t_to_sample_completion, mean_acceptance_fractions[i + j]))
+
+    # Marginalise!
+    blobs = np.array(sampler.blobs).reshape((-1, dimensions + 2))
+    #me_m = np.median()
 
     # Return the most likely parameters over the marginalised distribution
     # Here we will just take the mean
@@ -217,4 +222,4 @@ if __name__ == "__main__":
     fig.savefig("iterations.png")
     print("saved to iterations.png")
 
-    plt.show()
+    #plt.show()
