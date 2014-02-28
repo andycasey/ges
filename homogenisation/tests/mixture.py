@@ -1,6 +1,6 @@
 # coding: utf-8
 
-""" Model results from a Gaia-ESO Survey Node """
+""" A toy mixture model with uncertainties in STAN """
 
 from __future__ import division, print_function
 
@@ -18,7 +18,7 @@ import pystan
 
 def main():
     # Load the data for the toy model
-    ids, x, y, xerr, yerr, pxy = np.loadtxt("data/hogg-toy-model.data", unpack=True)
+    ids, x, y, xerr, yerr, pxy = np.loadtxt("../data/hogg-toy-model.data", unpack=True)
 
     with open("models/mixture-model-with-uncertainties.stan", "r") as fp:
         model_code = fp.read()
@@ -72,7 +72,6 @@ def main():
     ax.set_ylabel('Y')
 
     plt.show()
-
 
 
 if __name__ == "__main__":
