@@ -42,12 +42,13 @@ def load_benchmarks(filename):
     max_filenames_len, max_cname_len, max_object_len = (max(map(len, data[:, i])) for i in xrange(3))
 
     benchmarks = np.core.records.fromarrays(data.T,
-        names=["FILENAME", "CNAME", "Object", "TEFF", "LOGG", "MH"],
+        names=["FILENAME", "CNAME", "Object", "TEFF",
+            "e_TEFF", "LOGG", "e_LOGG", "MH"],
         formats=[
             "|S{0:.0f}".format(max_filenames_len),
             "|S{0:.0f}".format(max_cname_len),
             "|S{0:.0f}".format(max_object_len),
-            "f8", "f8", "f8"])
+            "f8", "f8", "f8", "f8", "f8"])
 
     return benchmarks
 
@@ -102,7 +103,7 @@ def prepare_data(benchmarks_filename, node_results_filenames,
     for benchmark in benchmarks:
 
         benchmark_results = {}
-        
+
         # Initialise
         for stellar_parameter in stellar_parameters_copy:
             benchmark_results[stellar_parameter] = []
@@ -167,7 +168,7 @@ def prepare_data(benchmarks_filename, node_results_filenames,
                     benchmark_results[stellar_parameter].append(np.nan)
 
                 else:
-                    # Build data arrays  
+                    # Build data arrays
                     benchmark_results[stellar_parameter].append(node[index][reference_stellar_parameter][0])
 
             if not problems:
@@ -181,5 +182,5 @@ def prepare_data(benchmarks_filename, node_results_filenames,
     # Arrayify
     data = np.array([node_stellar_parameters[stellar_parameter] for stellar_parameter in stellar_parameters_copy])
 
-    # Should we remove any nodes that have absolutely no data to contribute?    
+    # Should we remove any nodes that have absolutely no data to contribute?
     return (benchmarks, data)
