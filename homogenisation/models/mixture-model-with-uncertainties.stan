@@ -6,8 +6,8 @@ data {
  real y_uncertainty[N];
 }
 parameters {
- real<lower=0> m;
- real<lower=0> b;
+ real m;
+ real b;
  real<lower=0,upper=1> p1;
  real<lower=0> Yb;
  real<lower=0> Vb;
@@ -23,11 +23,11 @@ model {
  x ~ normal(x_measured, x_uncertainty);
  y_measured ~ normal(mu, y_uncertainty);
 
- m ~ normal(0, 5);
- b ~ normal(0, 50);
+ m ~ uniform(0.5, 1.5);
+ b ~ uniform(-1000, 1000);
  p1 ~ uniform(0, 1); //rec
- Yb ~ normal(0, 1e2);
- Vb ~ normal(0, 1e2); //req
+ Yb ~ normal(0, 1e3);
+ Vb ~ normal(0, 1e3); //req
 
  {
   real log_p1;
@@ -36,7 +36,7 @@ model {
   log1m_p1 <- log1m(p1);
   for (n in 1:N)
    increment_log_prob(log_sum_exp(
-    log_p1 + normal_log(y_measured[n], mu[n], y_uncertainty[n]),
+     log_p1  + normal_log(y_measured[n], mu[n], y_uncertainty[n]),
     log1m_p1 + normal_log(y_measured[n], Yb, Vb)));
  }
 }
