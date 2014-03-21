@@ -1,4 +1,6 @@
 *.png
+*.jpg
+*.pdf
 *.pyc
 homogenisation/data/*/*
 homogenisation/emcee
