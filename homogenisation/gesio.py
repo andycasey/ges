@@ -63,7 +63,7 @@ def load_node_results(filename):
 
 
 def prepare_data(benchmarks_filename, node_results_filenames,
-    stellar_parameters, acceptable_ranges=None):
+    stellar_parameters, acceptable_ranges=None, ignore=["ParisHeidelberg", "IACAIP"]):
     """ Loads expected stellar parameters from the Gaia benchmarks file, as well
     as measured stellar parameter from each of the Gaia-ESO Survey nodes """
 
@@ -82,6 +82,12 @@ def prepare_data(benchmarks_filename, node_results_filenames,
     # Load the benchmarks
     logger.info("Loading Gaia benchmark stars..")
     benchmarks = load_benchmarks(benchmarks_filename)
+
+    if ignore is not None:
+        for ignore_node in ignore:
+            if map(repr_node, node_results_filenames).index(ignore_node):
+                idx_del = map(repr_node, node_results_filenames).index(ignore_node)
+                del node_results_filenames[idx_del]
 
     # Get the data from each node
     logger.info("Loading results from Gaia-ESO Survey nodes..")
