@@ -12,30 +12,33 @@ from pystan import StanModel
 import gesio
 
 
-def generate_model(nodes=2, dimensions=("teff", "logg"), model_covariance=True, model_node_variances=False,
-	model_intrinsic_variances=False, model_outliers=True):
+def generate_model(data, dimensions=("teff", "logg")):
 
-	data_code = ""
+	benchmarks, nodes = data.shape[1:]
+
+	data_code = \
+	"""
+	int<lower=2> N_benchmarks;
+	int<lower=1> N_nodes;
+	"""
+
+	for dimension in dimensions:
+		data_code += \
+		"""
+		//	- Non-specroscopic measurements
+		real ns_{dim}_measured[N_benchmarks];
+		real ns_{dim}_sigma[N_benchmarks];
+		""".format(dim=dimension)
 
 	# Let's do the data code first
 	for node in xrange(nodes):
-		data_code += \
-		"""
-		// Node {n}
-		int<lower=2> N_benchmarks_node{n};
-		""".format(n=node)
-
 		for dimension in dimensions:
 
 			data_code += \
 			"""
 			//	- Spectroscopic measurements
-			real sp_{dim}_node{n}_measured[N_benchmarks_node{n}];
-			real sp_{dim}_node{n}_sigma[N_benchmarks_node{n}];
-
-			//	- Non-specroscopic measurements
-			real ns_{dim}_node{n}_measured[N_benchmarks_node{n}];
-			real ns_{dim}_node{n}_sigma[N_benchmarks_node{n}];
+			real sp_{dim}_node{n}_measured[N_benchmarks];
+			real sp_{dim}_node{n}_sigma[N_benchmarks];
 			""".format(n=node, dim=dimension)
 
 	model = """
@@ -56,157 +59,145 @@ def generate_model(nodes=2, dimensions=("teff", "logg"), model_covariance=True, 
 			""".format(dim=dimension, n=node)
 
 	# Model the outliers
-	if model_outliers:
+	parameters_code += \
+	"""
+	real<lower=0,upper=1> outlier_fraction;
+	"""
+	for dimension in dimensions:
 		parameters_code += \
 		"""
-		real<lower=0,upper=1> alpha;
-		"""
-		for dimension in dimensions:
-			parameters_code += \
-			"""
-			real outlier_{dim}_mu;
-			real<lower=0> outlier_{dim}_sigma;
-			""".format(dim=dimension)
+		real outlier_{dim}_mu;
+		real<lower=0> outlier_{dim}_variance;
+		""".format(dim=dimension)
 
-	# Model the intrinsic variance?
-	if model_intrinsic_variances:
-		for dimension in dimensions:
-			parameters_code += \
-			"""
-			real<lower=0> s_{dim}_intrinsic;
-			""".format(dim=dimension)
+	# Model the intrinsic variance
+	#for dimension in dimensions:
+	#	parameters_code += \
+	#	"""
+	#	real<lower=0> s_{dim}_intrinsic;
+	#	""".format(dim=dimension)
 
-	# Model the node variances?
-	if model_node_variances:
-		for node in nodes:
-			for dimension in dimensions:
-				parameters_code += \
-				"""
-				real<lower=0> s_{dim}_node{n};
-				""".format(dim=dimension, n=node)
+	# Model the node variances
+	#for node in xrange(nodes):
+	#	for dimension in dimensions:
+	#		parameters_code += \
+	#		"""
+	#		real<lower=0> s_{dim}_node{n};
+	#		""".format(dim=dimension, n=node)
 
-	# Model the covariances?
-	if model_covariance:
-		# We need the permutations
-		# approximate...
-		if len(dimensions) > 2:
-			raise NotImplementedError
-
-		parameters_code += \
-		"""
-		real<lower=-1,upper=1> rho_{dim_1}_{dim_2};
-		""".format(dim_1=dimensions[0], dim_2=dimensions[1])
-
-	model += """
+	model += \
+	"""
 	parameters {{
 	{parameters_code}
 	}}
 	""".format(parameters_code=parameters_code)
 
 	# Generate model code
-	model_code = """
-	// Declarations
-
-	vector[{ndim}] ns_vector;
-	vector[{ndim}] sp_vector;
-	matrix[{ndim},{ndim}] covariance;
-	""".format(ndim=len(dimensions))
-
-	if model_outliers:
-		model_code += \
-		"""
-		real log_alpha;
-		real log1m_alpha;
-
-		alpha ~ uniform(0, 1);
-
-		log_alpha <- log(alpha);
-		log1m_alpha <- log1m(alpha);
-		"""
+	model_code = \
+	"""
+	real log_outlier_fraction;
+	real log1m_outlier_fraction;
+	"""
 
 	for node in xrange(nodes):
 		for dimension in dimensions:
 			model_code += \
 			"""
-			m_{dim}_node{n} ~ normal(1, 0.1);
-			b_{dim}_node{n} ~ normal(0, 5);
+			m_{dim}_node{n} ~ normal(1, 0.5);
+			b_{dim}_node{n} ~ normal(0, 500);
 			""".format(n=node, dim=dimension)
 
-	# Model the covariance?
-	if model_covariance:
+	# Model the outliers
+	model_code += \
+	"""
+	outlier_fraction ~ uniform(0, 1);
+
+	log_outlier_fraction <- log(outlier_fraction);
+	log1m_outlier_fraction <- log1m(outlier_fraction);
+	"""
+
+	for dimension in dimensions:
 		model_code += \
 		"""
-		rho_{dim_1}_{dim_2} ~ uniform(-1, 1);
-		""".format(dim_1=dimensions[0], dim_2=dimensions[1])
+		outlier_{dim}_mu ~ normal(0, 1e3);
+		outlier_{dim}_variance ~ normal(0, 1e3);
+		""".format(dim=dimension)
 
-	# Model the outliers?
-	if model_outliers:
-		for dimension in dimensions:
+	# Model intrinsic variances
+	#for dimension in dimensions:
+	#	model_code += \
+	#	"""
+	#	s_{dim}_intrinsic ~ normal(0, {value});
+	#	""".format(dim=dimension, value=1e2 if dimension == "teff" else 1)
+
+	# Model node variances
+	#for node in xrange(nodes):
+	#	for dimension in dimensions:
+	#		model_code += \
+	#		"""
+	#		s_{dim}_node{n} ~ normal(0, {value});
+	#		""".format(dim=dimension, n=node, value=1e2 if dimension == "teff" else 1)
+
+	# For each stellar parameter
+	for i, dimension in enumerate(dimensions):
+
+		# For each benchmark
+		for j in xrange(benchmarks):
+
+			finite = np.isfinite(data[2*i, j, :]) * (data[2*i+1, j, :] > 0) 
+			if sum(finite) == 0: continue
+
+			finite_indices = np.where(finite)[0]
+			
+			# sum(finite) is how many nodes measured it
+
 			model_code += \
 			"""
-			outlier_{dim}_mu ~ normal(0, 1e3);
-			outlier_{dim}_sigma ~ normal(0, 1e3);
-			""".format(dim=dimension)
+			{{
+			vector[{n_finite}] yi;
+			vector[{n_finite}] transformed_yi;
+			vector[{n_finite}] sp_uncertainty;
+			matrix[{n_finite},{n_finite}] covariance;
+			""".format(n_finite=sum(finite))
 
-	# Model intrinsic variances?
-	if model_intrinsic_variances:
-		for dimension in dimensions:
+			# The non-spectroscopic vector
+			for k in xrange(1, 1 + sum(finite)):
+				model_code += \
+				"yi[{k}] <- sp_{dim}_node{n}_measured[{jp1}];\n".format(n=finite_indices[k-1], dim=dimension, k=k, jp1=j+1)
+
+			# The spectroscopic vector
+			for k in xrange(1, 1 + sum(finite)):
+				model_code += \
+				"""
+				transformed_yi[{k}] <- m_{dim}_node{n} * ns_{dim}_measured[{jp1}] + b_{dim}_node{n};
+				sp_uncertainty[{k}] <- outlier_{dim}_variance + pow(sp_{dim}_node{n}_sigma[{jp1}], 2);
+				""".format(k=k, dim=dimension, n=finite_indices[k-1], jp1=j+1)
+
+
+
+			# The covariance matrix
+			for k in xrange(1, 1 + sum(finite)):
+				for l in xrange(1, 1 + sum(finite)):
+					if k == l:
+						model_code += \
+						"covariance[{k},{l}] <- pow(sp_{dim}_node{n}_sigma[{jp1}], 2);\n".format(
+							dim=dimension, n=finite_indices[k-1], jp1=j+1, k=k, l=l)
+					else:
+						model_code += \
+						"covariance[{k},{l}] <- 0;\n".format(k=k, l=l)
+
+			# Increment the log likelihood
 			model_code += \
 			"""
-			s_{dim}_intrinsic ~ normal(0, 1e2);
-			""".format(dim=dimension)
+			increment_log_prob(log_sum_exp(
+				 log1m_outlier_fraction  + multi_normal_log(yi, transformed_yi, covariance),
+				 log_outlier_fraction + normal_log(yi, outlier_{dim}_mu, sp_uncertainty)
+			));
+			
+			}}
+			""".format(dim=dimension, jp1=j+1);
 
-	# Model node variances?
-	if model_node_variances:
-		for node in xrange(nodes):
-			for dimension in dimensions:
-				model_code += \
-				"""
-				s_{dim}_node{n} ~ normal(0, 1e2);
-				""".format(dim=dimension, n=node)
 
-	# The good stuff
-	for node in xrange(nodes):
-
-		model_code += \
-		"""
-		for (i in 1:N_benchmarks_node{n}) {{
-
-			// Non-spectroscopic measurements
-			ns_vector[1] <- ns_{d1}_node{n}_measured[i];
-			ns_vector[2] <- ns_{d2}_node{n}_measured[i];
-
-			// Spectroscopic measurements
-			sp_vector[1] <- m_{d1}_node{n} * sp_{d1}_node{n}_measured[i] + b_{d1}_node{n};
-			sp_vector[2] <- m_{d2}_node{n} * sp_{d2}_node{n}_measured[i] + b_{d2}_node{n};
-
-			// Covariance matrix
-			covariance[1,1] <- pow(sp_{d1}_node{n}_sigma[i], 2) {s_intrinsic_d1} {s_node_d1};
-			covariance[2,2] <- pow(sp_{d2}_node{n}_sigma[i], 2) {s_intrinsic_d2} {s_node_d2};
-			covariance[1,2] <- sqrt(covariance[1,1] * covariance[2,2]) * rho_{d1}_{d2};
-			covariance[2,1] <- sqrt(covariance[1,1] * covariance[2,2]) * rho_{d1}_{d2};
-
-			increment_log_prob(
-				{log_alpha} multi_normal_log(ns_vector, sp_vector, covariance)
-			);
-		""".format(d1=dimensions[0], d2=dimensions[1], n=node,
-			s_intrinsic_d1="+ s_{d1}_intrinsic".format(d1=dimensions[0]) if model_intrinsic_variances else "",
-			s_intrinsic_d2="+ s_{d2}_intrinsic".format(d2=dimensions[1]) if model_intrinsic_variances else "",
-			s_node_d1="+ s_{d1}_node{n}".format(d1=dimensions[0], n=node) if model_node_variances else "",
-			s_node_d2="+ s_{d2}_node{n}".format(d2=dimensions[1], n=node) if model_node_variances else "",
-			log_alpha="log_alpha + " if model_outliers else "")
-
-		# Modelling the outliers?
-		if model_outliers:
-			for j, dimension in enumerate(dimensions):
-				model_code += \
-				"""
-				increment_log_prob(
-					log1m_alpha + normal_log(sp_vector[{j}], outlier_{dim}_mu, outlier_{dim}_sigma)
-				);
-				""".format(j=j + 1, dim=dimension)
-
-		model_code += "}\n"
 
 	model += \
 	"""
@@ -219,8 +210,8 @@ def generate_model(nodes=2, dimensions=("teff", "logg"), model_covariance=True, 
 
 
 # Build the real data dict
-nodes = 4
-dimensions = ("teff", "logg")
+nodes = 3
+dimensions = ("teff",)#, "logg")
 
 # Ok, here is our real data:
 try: benchmarks
@@ -234,36 +225,49 @@ except NameError:
     # Load the data
     benchmarks, node_data = gesio.prepare_data("data/benchmarks.txt",
 		node_results_filenames, map(str.upper, dimensions))
+
+    node_data = node_data[:, :, :nodes]
+
 else:
     print("Using pre-loaded data. Stellar parameters are: {0}".format(", ".join(dimensions)))
 
+
+
+code = generate_model(data=node_data, dimensions=dimensions)
+
 # Put the data in the format we need for the model
-data = {} 
+data = {
+	"N_benchmarks": node_data.shape[1],
+	"N_nodes": node_data.shape[2]
+}
+
 for node in xrange(nodes):
 
-	# Just get finite values from first stellar parameter axes
+	#Set non-finite measurements and uncertainties (as determined by teff) to -1
 	finite = np.isfinite(node_data[0, :, node])
-	data["N_benchmarks_node{0}".format(node)] = sum(finite)
-
+	node_data[:, ~finite, node] = -1
+	
 	for i, dimension in enumerate(dimensions):
 
 		s = {"dim": dimension, "n": node}
-		data["sp_{dim}_node{n}_measured".format(**s)] = node_data[2*i, finite, node]
-		data["sp_{dim}_node{n}_sigma".format(**s)] = node_data[2*i + 1, finite, node]
-		data["ns_{dim}_node{n}_measured".format(**s)] = benchmarks[dimension.upper()][finite]
-		data["ns_{dim}_node{n}_sigma".format(**s)] = benchmarks["e_{0}".format(dimension.upper())][finite]
-
+		data["sp_{dim}_node{n}_measured".format(**s)] = node_data[2*i, :, node]
+		data["sp_{dim}_node{n}_sigma".format(**s)] = node_data[2*i + 1, :, node]
+		data["ns_{dim}_measured".format(**s)] = benchmarks[dimension.upper()]
+		data["ns_{dim}_sigma".format(**s)] = benchmarks["e_{0}".format(dimension.upper())]		
 
 # Generate the model
-code = generate_model(nodes=nodes, dimensions=dimensions, model_covariance=True, model_node_variances=False,
-	model_intrinsic_variances=False, model_outliers=True)
+with open("model.stan", "w") as fp:
+	fp.write(code)
+
+print(node_data.shape)
 model = StanModel(model_code=code)
 
 print("Optimizing...")
 op = model.optimizing(data=data)
 
+print("Optimized Values: \n{0}".format(op["par"]))
 print("Fitting...")
-fit = model.sampling(data=data, pars=op["par"], iter=20000)
+fit = model.sampling(data=data, pars=op["par"], iter=5000)
 
 subplots_adjust = { "left": 0.10, "bottom": 0.05, "right": 0.95, "top": 0.95,
 	"wspace": 0.20, "hspace": 0.45
@@ -308,8 +312,8 @@ for node in xrange(nodes):
 
 		# Predictive model
 		x = np.linspace(
-		    np.min(data["ns_{dim}_node{n}_measured".format(**strs)]),
-		    np.max(data["ns_{dim}_node{n}_measured".format(**strs)]),
+		    np.min(data["ns_{dim}_measured".format(**strs)]),
+		    np.max(data["ns_{dim}_measured".format(**strs)]),
 		    1000)
 
 		linear_model = lambda theta: pandas.Series({"fitted": theta[1] * x + theta[0]})
@@ -327,13 +331,13 @@ for node in xrange(nodes):
 
 		#  Plot the data
 		ax.errorbar(
-			x=data["ns_{dim}_node{n}_measured".format(**strs)],
+			x=data["ns_{dim}_measured".format(**strs)],
 			y=data["sp_{dim}_node{n}_measured".format(**strs)],
-		    xerr=data["ns_{dim}_node{n}_sigma".format(**strs)],
+		    xerr=data["ns_{dim}_sigma".format(**strs)],
 		    yerr=data["sp_{dim}_node{n}_sigma".format(**strs)],
 		    fmt=None, facecolor="k", ecolor="k", zorder=10)
 		ax.plot(
-			data["ns_{dim}_node{n}_measured".format(**strs)],
+			data["ns_{dim}_measured".format(**strs)],
 			data["sp_{dim}_node{n}_measured".format(**strs)],
 			'ko', zorder=10)
 
