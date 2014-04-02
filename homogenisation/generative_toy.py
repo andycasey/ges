@@ -71,19 +71,19 @@ def generate_model(data, dimensions=("teff", "logg")):
 		""".format(dim=dimension)
 
 	# Model the intrinsic variance
-	#for dimension in dimensions:
-	#	parameters_code += \
-	#	"""
-	#	real<lower=0> s_{dim}_intrinsic;
-	#	""".format(dim=dimension)
+	for dimension in dimensions:
+		parameters_code += \
+		"""
+		real<lower=0> s_{dim}_intrinsic;
+		""".format(dim=dimension)
 
 	# Model the node variances
-	#for node in xrange(nodes):
-	#	for dimension in dimensions:
-	#		parameters_code += \
-	#		"""
-	#		real<lower=0> s_{dim}_node{n};
-	#		""".format(dim=dimension, n=node)
+	for node in xrange(nodes):
+		for dimension in dimensions:
+			parameters_code += \
+			"""
+			real<lower=0> s_{dim}_node{n};
+			""".format(dim=dimension, n=node)
 
 	model += \
 	"""
@@ -124,19 +124,19 @@ def generate_model(data, dimensions=("teff", "logg")):
 		""".format(dim=dimension)
 
 	# Model intrinsic variances
-	#for dimension in dimensions:
-	#	model_code += \
-	#	"""
-	#	s_{dim}_intrinsic ~ normal(0, {value});
-	#	""".format(dim=dimension, value=1e2 if dimension == "teff" else 1)
+	for dimension in dimensions:
+		model_code += \
+		"""
+		s_{dim}_intrinsic ~ normal(0, {value});
+		""".format(dim=dimension, value=1e2 if dimension == "teff" else 1)
 
 	# Model node variances
-	#for node in xrange(nodes):
-	#	for dimension in dimensions:
-	#		model_code += \
-	#		"""
-	#		s_{dim}_node{n} ~ normal(0, {value});
-	#		""".format(dim=dimension, n=node, value=1e2 if dimension == "teff" else 1)
+	for node in xrange(nodes):
+		for dimension in dimensions:
+			model_code += \
+			"""
+			s_{dim}_node{n} ~ normal(0, {value});
+			""".format(dim=dimension, n=node, value=1e2 if dimension == "teff" else 1)
 
 	# For each stellar parameter
 	for i, dimension in enumerate(dimensions):
@@ -170,7 +170,7 @@ def generate_model(data, dimensions=("teff", "logg")):
 				model_code += \
 				"""
 				transformed_yi[{k}] <- m_{dim}_node{n} * ns_{dim}_measured[{jp1}] + b_{dim}_node{n};
-				sp_uncertainty[{k}] <- outlier_{dim}_variance + pow(sp_{dim}_node{n}_sigma[{jp1}], 2);
+				sp_uncertainty[{k}] <- outlier_{dim}_variance + pow(sp_{dim}_node{n}_sigma[{jp1}], 2) + pow(s_{dim}_intrinsic, 2) + pow(s_{dim}_node{n}, 2);
 				""".format(k=k, dim=dimension, n=finite_indices[k-1], jp1=j+1)
 
 
@@ -180,11 +180,11 @@ def generate_model(data, dimensions=("teff", "logg")):
 				for l in xrange(1, 1 + sum(finite)):
 					if k == l:
 						model_code += \
-						"covariance[{k},{l}] <- pow(sp_{dim}_node{n}_sigma[{jp1}], 2);\n".format(
+						"covariance[{k},{l}] <- pow(sp_{dim}_node{n}_sigma[{jp1}], 2) + pow(s_{dim}_intrinsic, 2) + pow(s_{dim}_node{n}, 2);\n".format(
 							dim=dimension, n=finite_indices[k-1], jp1=j+1, k=k, l=l)
 					else:
 						model_code += \
-						"covariance[{k},{l}] <- 0;\n".format(k=k, l=l)
+						"covariance[{k},{l}] <- pow(s_{dim}_intrinsic, 2);\n".format(dim=dimension, k=k, l=l)
 
 			# Increment the log likelihood
 			model_code += \
@@ -210,8 +210,8 @@ def generate_model(data, dimensions=("teff", "logg")):
 
 
 # Build the real data dict
-nodes = 3
-dimensions = ("teff",)#, "logg")
+nodes = 9
+dimensions = ("teff", )#"logg")
 
 # Ok, here is our real data:
 try: benchmarks
@@ -267,7 +267,7 @@ op = model.optimizing(data=data)
 
 print("Optimized Values: \n{0}".format(op["par"]))
 print("Fitting...")
-fit = model.sampling(data=data, pars=op["par"], iter=5000)
+fit = model.sampling(data=data, pars=op["par"], iter=20000)
 
 subplots_adjust = { "left": 0.10, "bottom": 0.05, "right": 0.95, "top": 0.95,
 	"wspace": 0.20, "hspace": 0.45
